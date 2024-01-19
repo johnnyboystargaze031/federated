@@ -397,9 +397,7 @@ class ValueTest(parameterized.TestCase):
 
     sliced = v[:2]
     self.assertEqual((str(sliced.type_signature)), '<int32,int32>')
-    self.assertEqual(
-        str(sliced), '<fc_FEDERATED_symbol_0,fc_FEDERATED_symbol_1>'
-    )
+    self.assertEqual(str(sliced), '<0,10>')
 
     expected_symbol_bindings = [
         ('fc_FEDERATED_symbol_0', [r'comp#[a-zA-Z0-9]*()']),
@@ -431,7 +429,7 @@ class ValueTest(parameterized.TestCase):
     self.assertEqual((str(sliced.type_signature)), '<int32,int32,int32>')
     self.assertEqual(
         str(sliced),
-        '<fc_FEDERATED_symbol_2,fc_FEDERATED_symbol_3,fc_FEDERATED_symbol_4>',
+        '<20,30,40>',
     )
 
     expected_symbol_bindings = [
@@ -461,7 +459,7 @@ class ValueTest(parameterized.TestCase):
     self.assertEqual((str(sliced.type_signature)), '<int32,int32,int32>')
     self.assertEqual(
         str(sliced),
-        '<fc_FEDERATED_symbol_0,fc_FEDERATED_symbol_2,fc_FEDERATED_symbol_4>',
+        '<0,20,40>',
     )
 
     expected_symbol_bindings = [

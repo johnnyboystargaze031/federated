@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import numpy as np
 
 from tensorflow_federated.proto.v0 import computation_pb2 as pb
@@ -56,7 +57,7 @@ class ComputationBuildingBlocksTest(absltest.TestCase):
         repr(y),
         (
             "Selection(Reference('foo', StructType(["
-            "('bar', TensorType(np.int32)), ('baz', TensorType(np.bool))]))"
+            "('bar', TensorType(np.int32)), ('baz', TensorType(np.bool_))]))"
             ", name='bar')"
         ),
     )
@@ -74,7 +75,7 @@ class ComputationBuildingBlocksTest(absltest.TestCase):
         repr(x0),
         (
             "Selection(Reference('foo', StructType(["
-            "('bar', TensorType(np.int32)), ('baz', TensorType(np.bool))]))"
+            "('bar', TensorType(np.int32)), ('baz', TensorType(np.bool_))]))"
             ', index=0)'
         ),
     )
@@ -116,7 +117,7 @@ class ComputationBuildingBlocksTest(absltest.TestCase):
         repr(z),
         (
             "Struct([(None, Reference('foo', TensorType(np.int32))), ('y', "
-            "Reference('bar', TensorType(np.bool)))])"
+            "Reference('bar', TensorType(np.bool_)))])"
         ),
     )
     self.assertEqual(z.compact_representation(), '<foo,y=bar>')
@@ -166,7 +167,7 @@ class ComputationBuildingBlocksTest(absltest.TestCase):
         repr(z),
         (
             "Call(Reference('foo', "
-            'FunctionType(TensorType(np.int32), TensorType(np.bool))), '
+            'FunctionType(TensorType(np.int32), TensorType(np.bool_))), '
             "Reference('bar', TensorType(np.int32)))"
         ),
     )
@@ -485,6 +486,257 @@ class ComputationBuildingBlocksTest(absltest.TestCase):
     # Note: This is not an equality comparison because ser/de is not an identity
     # transform: it will drop the container from `StructWithPythonType`.
     target.type_signature.check_assignable_from(deserialized.type_signature)
+
+
+class LiteralTest(parameterized.TestCase):
+
+  @parameterized.named_parameters(
+      ('int', 1, computation_types.TensorType(np.int32)),
+      ('float', 1.0, computation_types.TensorType(np.float32)),
+      ('complex', (1 + 2j), computation_types.TensorType(np.complex64)),
+      ('bool', True, computation_types.TensorType(np.bool_)),
+      ('str', 'a', computation_types.TensorType(np.str_)),
+      ('bytes', b'a', computation_types.TensorType(np.str_)),
+      ('generic', np.int32(1), computation_types.TensorType(np.int32)),
+      (
+          'array',
+          np.array([1, 2, 3], np.int32),
+          computation_types.TensorType(np.int32, shape=[3]),
+      ),
+  )
+  def test_init_does_not_raise_value_error(self, value, type_signature):
+    try:
+      building_blocks.Literal(value, type_signature)
+    except ValueError:
+      self.fail('Raised `ValueError` unexpectedly.')
+
+  @parameterized.named_parameters(
+      (
+          'scalar_and_wrong_dtype_kind',
+          1,
+          computation_types.TensorType(np.float32),
+      ),
+      (
+          'scalar_and_wrong_dtype_size',
+          np.iinfo(np.int32).max + 1,
+          computation_types.TensorType(np.int32),
+      ),
+      (
+          'scalar_and_wrong_shape',
+          1,
+          computation_types.TensorType(np.int32, shape=[2, 3]),
+      ),
+      (
+          'array_and_wrong_dtype',
+          np.array([1, 2, 3], np.int32),
+          computation_types.TensorType(np.float32, shape=[3]),
+      ),
+      (
+          'array_and_wrong_shape',
+          np.array([1, 2, 3], np.int32),
+          computation_types.TensorType(np.int32, shape=[2, 3]),
+      ),
+  )
+  def test_init_raises_value_error(self, value, type_signature):
+    with self.assertRaises(ValueError):
+      building_blocks.Literal(value, type_signature)
+
+  @parameterized.named_parameters(
+      (
+          'int',
+          building_blocks.Literal(1, computation_types.TensorType(np.int32)),
+          building_blocks.Literal(1, computation_types.TensorType(np.int32)),
+      ),
+      (
+          'float',
+          building_blocks.Literal(
+              1.0, computation_types.TensorType(np.float32)
+          ),
+          building_blocks.Literal(
+              1.0, computation_types.TensorType(np.float32)
+          ),
+      ),
+      (
+          'complex',
+          building_blocks.Literal(
+              (1 + 2j), computation_types.TensorType(np.complex64)
+          ),
+          building_blocks.Literal(
+              (1 + 2j), computation_types.TensorType(np.complex64)
+          ),
+      ),
+      (
+          'bool',
+          building_blocks.Literal(True, computation_types.TensorType(np.bool_)),
+          building_blocks.Literal(True, computation_types.TensorType(np.bool_)),
+      ),
+      (
+          'str',
+          building_blocks.Literal('a', computation_types.TensorType(np.str_)),
+          building_blocks.Literal('a', computation_types.TensorType(np.str_)),
+      ),
+      (
+          'bytes',
+          building_blocks.Literal(b'a', computation_types.TensorType(np.str_)),
+          building_blocks.Literal('a', computation_types.TensorType(np.str_)),
+      ),
+      (
+          'generic',
+          building_blocks.Literal(
+              np.int32(1), computation_types.TensorType(np.int32)
+          ),
+          building_blocks.Literal(
+              np.int32(1), computation_types.TensorType(np.int32)
+          ),
+      ),
+      (
+          'array',
+          building_blocks.Literal(
+              np.array([1, 2, 3], np.int32),
+              computation_types.TensorType(np.int32, shape=[3]),
+          ),
+          building_blocks.Literal(
+              np.array([1, 2, 3], np.int32),
+              computation_types.TensorType(np.int32, shape=[3]),
+          ),
+      ),
+  )
+  def test_to_from_proto(self, literal, expected_value):
+    proto = literal._proto()
+    actual_value = building_blocks.Literal.from_proto(proto)
+
+    self.assertEqual(actual_value, expected_value)
+
+  @parameterized.named_parameters(
+      (
+          'int',
+          building_blocks.Literal(1, computation_types.TensorType(np.int32)),
+      ),
+      (
+          'float',
+          building_blocks.Literal(
+              1.0, computation_types.TensorType(np.float32)
+          ),
+      ),
+      (
+          'complex',
+          building_blocks.Literal(
+              (1 + 2j), computation_types.TensorType(np.complex64)
+          ),
+      ),
+      (
+          'bool',
+          building_blocks.Literal(True, computation_types.TensorType(np.bool_)),
+      ),
+      (
+          'str',
+          building_blocks.Literal('a', computation_types.TensorType(np.str_)),
+      ),
+      (
+          'bytes',
+          building_blocks.Literal(b'a', computation_types.TensorType(np.str_)),
+      ),
+      (
+          'generic',
+          building_blocks.Literal(
+              np.int32(1), computation_types.TensorType(np.int32)
+          ),
+      ),
+      (
+          'array',
+          building_blocks.Literal(
+              np.array([1, 2, 3], np.int32),
+              computation_types.TensorType(np.int32, shape=[3]),
+          ),
+      ),
+  )
+  def test_children_is_empty(self, literal):
+    actual_children = list(literal.children())
+    self.assertEqual(actual_children, [])
+
+  @parameterized.named_parameters(
+      (
+          'int',
+          building_blocks.Literal(1, computation_types.TensorType(np.int32)),
+          building_blocks.Literal(1, computation_types.TensorType(np.int32)),
+      ),
+  )
+  def test_eq_returns_true(self, literal, other):
+    self.assertIsNot(literal, other)
+    self.assertEqual(literal, other)
+
+  @parameterized.named_parameters(
+      (
+          'int_different_values',
+          building_blocks.Literal(1, computation_types.TensorType(np.int32)),
+          building_blocks.Literal(2, computation_types.TensorType(np.int32)),
+      ),
+      (
+          'int_different_dtypes',
+          building_blocks.Literal(1, computation_types.TensorType(np.int32)),
+          building_blocks.Literal(1, computation_types.TensorType(np.int64)),
+      ),
+  )
+  def test_eq_returns_false(self, literal, other):
+    self.assertIsNot(literal, other)
+    self.assertNotEqual(literal, other)
+
+  @parameterized.named_parameters(
+      (
+          'int',
+          building_blocks.Literal(1, computation_types.TensorType(np.int32)),
+          'Literal(1, TensorType(np.int32))',
+      ),
+      (
+          'float',
+          building_blocks.Literal(
+              1.0, computation_types.TensorType(np.float32)
+          ),
+          'Literal(1.0, TensorType(np.float32))',
+      ),
+      (
+          'complex',
+          building_blocks.Literal(
+              (1 + 2j), computation_types.TensorType(np.complex64)
+          ),
+          'Literal((1+2j), TensorType(np.complex64))',
+      ),
+      (
+          'bool',
+          building_blocks.Literal(True, computation_types.TensorType(np.bool_)),
+          'Literal(True, TensorType(np.bool_))',
+      ),
+      (
+          'str',
+          building_blocks.Literal('a', computation_types.TensorType(np.str_)),
+          "Literal('a', TensorType(np.str_))",
+      ),
+      (
+          'bytes',
+          building_blocks.Literal(b'a', computation_types.TensorType(np.str_)),
+          "Literal(b'a', TensorType(np.str_))",
+      ),
+      (
+          'generic',
+          building_blocks.Literal(
+              np.int32(1), computation_types.TensorType(np.int32)
+          ),
+          'Literal(1, TensorType(np.int32))',
+      ),
+      (
+          'array',
+          building_blocks.Literal(
+              np.array([1, 2, 3], np.int32),
+              computation_types.TensorType(np.int32, shape=[3]),
+          ),
+          (
+              'Literal(np.array([1, 2, 3], dtype=np.int32),'
+              ' TensorType(np.int32, (3,)))'
+          ),
+      ),
+  )
+  def test_repr(self, literal, expected_repr):
+    self.assertEqual(repr(literal), expected_repr)
 
 
 class RepresentationTest(absltest.TestCase):

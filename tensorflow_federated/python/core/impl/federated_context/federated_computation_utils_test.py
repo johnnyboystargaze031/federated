@@ -48,7 +48,7 @@ class ZeroOrOneArgFnToBuildingBlockTest(parameterized.TestCase):
        lambda x: (x[1], x[0]),
        computation_types.StructType([np.int32, np.int32]),
        '(FEDERATED_foo -> <FEDERATED_foo[1],FEDERATED_foo[0]>)'),
-      ('constant', lambda: 'stuff', None, '( -> (let fc_FEDERATED_symbol_0=comp#'))
+      ('constant', lambda: 'stuff', None, '( -> stuff)'))
   # pyformat: enable
   def test_returns_result(self, fn, parameter_type, fn_str):
     parameter_name = 'foo' if parameter_type is not None else None
@@ -58,7 +58,7 @@ class ZeroOrOneArgFnToBuildingBlockTest(parameterized.TestCase):
             fn, parameter_name, parameter_type, context_stack_impl.context_stack
         )
     )
-    self.assertStartsWith(str(result), fn_str)
+    self.assertEqual(str(result), fn_str)
 
   # pyformat: disable
   @parameterized.named_parameters(

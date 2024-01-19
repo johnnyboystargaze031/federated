@@ -96,6 +96,9 @@ message Computation {
     // composed into larger computations with the use of the compositional
     // constructs defined below.
 
+    // A literal.
+    Literal literal = 14;
+
     // TensorFlow computation. TensorFlow computations have functional type
     // signatures that cannot contain FederatedTypes, as they execute locally.
     // In order to construct a TensorFlow computation that maps a federated
@@ -965,4 +968,12 @@ message Xla {
       int32 index = 1;
     }
   }
+}
+
+message Literal {
+  bytes value = 1;
+
+  // oneof value {
+  //   int32 int_value = 1;
+  // }
 }

@@ -243,21 +243,6 @@ def _wrap_computation_as_value(proto: pb.Computation) -> Value:
   return Value(ref)
 
 
-def _wrap_constant_as_value(const) -> Value:
-  """Wraps the given Python constant as a `tff.Value`.
-
-  Args:
-    const: Python constant convertible to Tensor via `tf.constant`.
-
-  Returns:
-    An instance of `tff.Value`.
-  """
-  tf_comp, _ = tensorflow_computation_factory.create_computation_for_py_fn(
-      fn=lambda: tf.constant(const), parameter_type=None
-  )
-  return _wrap_computation_as_value(tf_comp)
-
-
 def _wrap_sequence_as_value(elements, element_type) -> Value:
   """Wraps `elements` as a TFF sequence with elements of type `element_type`.
 
@@ -440,7 +425,9 @@ def to_value(
     items = zip(itertools.repeat(None), arg)
     result = _dictlike_items_to_value(items, type_spec, type(arg))
   elif isinstance(arg, tensorflow_utils.TENSOR_REPRESENTATION_TYPES):
-    result = _wrap_constant_as_value(arg)
+    if type_spec is None:
+      type_spec = type_conversions.infer_type(arg)
+    result = Value(building_blocks.Literal(arg, type_spec))
   else:
     raise TypeError(
         'Expected a Python types that is convertible to a `tff.Value`, found'

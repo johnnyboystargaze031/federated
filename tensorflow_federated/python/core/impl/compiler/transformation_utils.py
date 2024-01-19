@@ -72,6 +72,7 @@ def transform_postorder(comp, transform):
           building_blocks.Intrinsic,
           building_blocks.Placement,
           building_blocks.Reference,
+          building_blocks.Literal,
       ),
   ):
     return transform(comp)
