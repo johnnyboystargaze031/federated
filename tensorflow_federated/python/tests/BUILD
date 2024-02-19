@@ -1,3 +1,4 @@
+load("//tensorflow_federated/tools:build_defs.bzl", "py_cpu_gpu_test")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:private"])
@@ -16,17 +17,21 @@ py_test(
     ],
 )
 
+py_cpu_gpu_test(
+    name = "backend_accelerators_test",
+    srcs = ["backend_accelerators_test.py"],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    deps = ["//tensorflow_federated"],
+)
+
 py_test(
     name = "canonical_form_test",
     size = "large",
     srcs = ["canonical_form_test.py"],
     python_version = "PY3",
     srcs_version = "PY3",
-    deps = [
-        "//tensorflow_federated",
-        "//tensorflow_federated/python/common_libs:structure",
-        "//tensorflow_federated/python/common_libs:test_utils",
-    ],
+    deps = ["//tensorflow_federated"],
 )
 
 py_test(

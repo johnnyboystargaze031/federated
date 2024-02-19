@@ -44,6 +44,7 @@ py_library(
         ":model_utils",
         "//tensorflow_federated/python/aggregators:factory",
         "//tensorflow_federated/python/common_libs:py_typecheck",
+        "//tensorflow_federated/python/core/api:computations",
         "//tensorflow_federated/python/core/templates:iterative_process",
         "//tensorflow_federated/python/core/templates:measured_process",
         "//tensorflow_federated/python/learning/framework:dataset_reduce",
@@ -113,6 +114,7 @@ py_library(
         ":model_utils",
         "//tensorflow_federated/python/aggregators:factory",
         "//tensorflow_federated/python/common_libs:py_typecheck",
+        "//tensorflow_federated/python/core/api:computations",
         "//tensorflow_federated/python/core/templates:iterative_process",
         "//tensorflow_federated/python/core/templates:measured_process",
         "//tensorflow_federated/python/learning/framework:dataset_reduce",
@@ -214,6 +216,38 @@ py_library(
         "//tensorflow_federated/python/core/api:computation_types",
         "//tensorflow_federated/python/core/impl/types:type_analysis",
         "//tensorflow_federated/python/core/impl/types:type_conversions",
+    ],
+)
+
+py_library(
+    name = "model_update_aggregator",
+    srcs = ["model_update_aggregator.py"],
+    srcs_version = "PY3",
+    deps = [
+        "//tensorflow_federated/python/aggregators:clipping_factory",
+        "//tensorflow_federated/python/aggregators:dp_factory",
+        "//tensorflow_federated/python/aggregators:factory",
+        "//tensorflow_federated/python/aggregators:mean_factory",
+        "//tensorflow_federated/python/aggregators:quantile_estimation",
+        "//tensorflow_federated/python/core/api:computation_types",
+        "//tensorflow_federated/python/core/api:computations",
+        "//tensorflow_federated/python/core/api:intrinsics",
+    ],
+)
+
+py_test(
+    name = "model_update_aggregator_test",
+    srcs = ["model_update_aggregator_test.py"],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    deps = [
+        ":model_update_aggregator",
+        "//tensorflow_federated/python/aggregators:clipping_factory",
+        "//tensorflow_federated/python/aggregators:factory",
+        "//tensorflow_federated/python/aggregators:mean_factory",
+        "//tensorflow_federated/python/core/api:computation_types",
+        "//tensorflow_federated/python/core/api:test_case",
+        "//tensorflow_federated/python/core/templates:aggregation_process",
     ],
 )
 

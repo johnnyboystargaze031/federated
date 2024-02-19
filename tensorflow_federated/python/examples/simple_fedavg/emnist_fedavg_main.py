@@ -35,8 +35,8 @@ flags.DEFINE_integer('train_clients_per_round', 2,
                      'How many clients to sample per round.')
 flags.DEFINE_integer('client_epochs_per_round', 1,
                      'Number of epochs in the client to take per round.')
-flags.DEFINE_integer('batch_size', 20, 'Batch size used on the client.')
-flags.DEFINE_integer('test_batch_size', 100, 'Minibatch size of test data.')
+flags.DEFINE_integer('batch_size', 16, 'Batch size used on the client.')
+flags.DEFINE_integer('test_batch_size', 128, 'Minibatch size of test data.')
 
 # Optimizer configuration (this defines one or more flags per optimizer).
 flags.DEFINE_float('server_learning_rate', 1.0, 'Server learning rate.')
@@ -81,9 +81,6 @@ def get_emnist_dataset():
 def create_original_fedavg_cnn_model(only_digits=True):
   """The CNN model used in https://arxiv.org/abs/1602.05629.
 
-  This function is duplicated from research/optimization/emnist/models.py to
-  make this example completely stand-alone.
-
   Args:
     only_digits: If True, uses a final layer with 10 outputs, for use with the
       digits only EMNIST dataset. If False, uses 62 outputs for the larger
@@ -115,7 +112,6 @@ def create_original_fedavg_cnn_model(only_digits=True):
       tf.keras.layers.Flatten(),
       tf.keras.layers.Dense(512, activation=tf.nn.relu),
       tf.keras.layers.Dense(10 if only_digits else 62),
-      tf.keras.layers.Activation(tf.nn.softmax),
   ])
 
   return model
@@ -133,12 +129,23 @@ def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
 
+  # If GPU is provided, TFF will by default use the first GPU like TF. The
+  # following lines will configure TFF to use multi-GPUs and distribute client
+  # computation on the GPUs. Note that we put server computatoin on CPU to avoid
+  # potential out of memory issue when a large number of clients is sampled per
+  # round. The client devices below can be an empty list when no GPU could be
+  # detected by TF.
+  client_devices = tf.config.list_logical_devices('GPU')
+  server_device = tf.config.list_logical_devices('CPU')[0]
+  tff.backends.native.set_local_execution_context(
+      server_tf_device=server_device, client_tf_devices=client_devices)
+
   train_data, test_data = get_emnist_dataset()
 
   def tff_model_fn():
     """Constructs a fully initialized model for use in federated averaging."""
     keras_model = create_original_fedavg_cnn_model(only_digits=True)
-    loss = tf.keras.losses.SparseCategoricalCrossentropy()
+    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
     return simple_fedavg_tf.KerasModelWrapper(keras_model,
                                               test_data.element_spec, loss)
 

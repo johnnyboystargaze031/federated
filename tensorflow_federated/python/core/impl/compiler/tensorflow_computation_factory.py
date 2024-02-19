@@ -13,6 +13,7 @@
 # limitations under the License.
 """A library of contruction functions for tensorflow computation structures."""
 
+import functools
 import types
 from typing import Any, Callable, Optional, Tuple
 
@@ -41,20 +42,18 @@ def _tensorflow_comp(
   return (comp, type_signature)
 
 
-def create_constant(scalar_value,
-                    type_spec: computation_types.Type) -> ProtoAndType:
-  """Returns a tensorflow computation returning a constant `scalar_value`.
+def create_constant(value, type_spec: computation_types.Type) -> ProtoAndType:
+  """Returns a tensorflow computation returning a constant `value`.
 
   The returned computation has the type signature `( -> T)`, where `T` is
   `type_spec`.
 
-  `scalar_value` must be a scalar, and cannot be a float if any of the tensor
-  leaves of `type_spec` contain an integer data type. `type_spec` must contain
-  only named tuples and tensor types, but these can be arbitrarily nested.
+  `value` must be a value convertible to a tensor or a structure of values, such
+  that the dtype and shapes match `type_spec`. `type_spec` must contain only
+  named tuples and tensor types, but these can be arbitrarily nested.
 
   Args:
-    scalar_value: A scalar value to place in all the tensor leaves of
-      `type_spec`.
+    value: A value to embed as a constant in the tensorflow graph.
     type_spec: A `computation_types.Type` to use as the argument to the
       constructed binary operator; must contain only named tuples and tensor
       types.
@@ -66,12 +65,16 @@ def create_constant(scalar_value,
     raise TypeError(
         'Type spec {} cannot be constructed as a TensorFlow constant in TFF; '
         ' only nested tuples and tensors are permitted.'.format(type_spec))
-  inferred_scalar_value_type = type_conversions.infer_type(scalar_value)
-  if (not inferred_scalar_value_type.is_tensor() or
-      inferred_scalar_value_type.shape != tf.TensorShape(())):
+  inferred_value_type = type_conversions.infer_type(value)
+  if (inferred_value_type.is_struct() and
+      not type_spec.is_assignable_from(inferred_value_type)):
     raise TypeError(
-        'Must pass a scalar value to `create_tensorflow_constant`; encountered '
-        'a value {}'.format(scalar_value))
+        'Must pass a only tensor or structure of tensor values to '
+        '`create_tensorflow_constant`; encountered a value {v} with inferred '
+        'type {t!r}, but needed {s!r}'.format(
+            v=value, t=inferred_value_type, s=type_spec))
+  if inferred_value_type.is_struct():
+    value = structure.from_container(value, recursive=True)
   tensor_dtypes_in_type_spec = []
 
   def _pack_dtypes(type_signature):
@@ -83,30 +86,36 @@ def create_constant(scalar_value,
   type_transformations.transform_type_postorder(type_spec, _pack_dtypes)
 
   if (any(x.is_integer for x in tensor_dtypes_in_type_spec) and
-      not inferred_scalar_value_type.dtype.is_integer):
+      (inferred_value_type.is_tensor() and
+       not inferred_value_type.dtype.is_integer)):
     raise TypeError(
         'Only integers can be used as scalar values if our desired constant '
         'type spec contains any integer tensors; passed scalar {} of dtype {} '
-        'for type spec {}.'.format(scalar_value,
-                                   inferred_scalar_value_type.dtype, type_spec))
+        'for type spec {}.'.format(value, inferred_value_type.dtype, type_spec))
 
   result_type = type_spec
 
-  def _create_result_tensor(type_spec, scalar_value):
-    """Packs `scalar_value` into `type_spec` recursively."""
+  def _create_result_tensor(type_spec, value):
+    """Packs `value` into `type_spec` recursively."""
     if type_spec.is_tensor():
       type_spec.shape.assert_is_fully_defined()
-      result = tf.constant(
-          scalar_value, dtype=type_spec.dtype, shape=type_spec.shape)
+      result = tf.constant(value, dtype=type_spec.dtype, shape=type_spec.shape)
     else:
       elements = []
-      for _, type_element in structure.iter_elements(type_spec):
-        elements.append(_create_result_tensor(type_element, scalar_value))
-      result = elements
+      if inferred_value_type.is_struct():
+        # Copy the leaf values according to the type_spec structure.
+        for (name, elem_type), value in zip(
+            structure.iter_elements(type_spec), value):
+          elements.append((name, _create_result_tensor(elem_type, value)))
+      else:
+        # "Broadcast" the value to each level of the type_spec structure.
+        for _, elem_type in structure.iter_elements(type_spec):
+          elements.append((None, _create_result_tensor(elem_type, value)))
+      result = structure.Struct(elements)
     return result
 
   with tf.Graph().as_default() as graph:
-    result = _create_result_tensor(result_type, scalar_value)
+    result = _create_result_tensor(result_type, value)
     _, result_binding = tensorflow_utils.capture_result_from_graph(
         result, graph)
 
@@ -189,10 +198,11 @@ def create_binary_operator_with_upcast(
   """Creates TF computation upcasting its argument and applying `operator`.
 
   Args:
-    type_signature: A `computation_types.StructType` with two elements, both of
-      the same type or the second able to be upcast to the first, as explained
-      in `apply_binary_operator_with_upcast`, and both containing only tuples
-      and tensors in their type tree.
+    type_signature: A `computation_types.StructType` with two elements, both
+      only containing structs or tensors in their type tree. The first and
+      second element must match in structure, or the second element may be a
+      single tensor type that is broadcasted (upcast) to the leaves of the
+      structure of the first type.
     operator: Callable defining the operator.
 
   Returns:
@@ -228,7 +238,19 @@ def create_binary_operator_with_upcast(
         'x', type_signature[0], graph)
     operand_2_value, operand_2_binding = tensorflow_utils.stamp_parameter_in_graph(
         'y', type_signature[1], graph)
-    if type_signature[0].is_equivalent_to(type_signature[1]):
+
+    if type_signature[0].is_struct() and type_signature[1].is_struct():
+      # If both the first and second arguments are structs with the same
+      # structure, simply re-use operand_2_value as. `tf.nest.map_structure`
+      # below will map the binary operator pointwise to the leaves of the
+      # structure.
+      if structure.is_same_structure(type_signature[0], type_signature[1]):
+        second_arg = operand_2_value
+      else:
+        raise TypeError('Cannot upcast one structure to a different structure. '
+                        '{x} -> {y}'.format(
+                            x=type_signature[1], y=type_signature[0]))
+    elif type_signature[0].is_equivalent_to(type_signature[1]):
       second_arg = operand_2_value
     else:
       second_arg = _pack_into_type(operand_2_value, type_signature[0])
@@ -260,17 +282,7 @@ def create_empty_tuple() -> ProtoAndType:
 
   The returned computation has the type signature `( -> <>)`.
   """
-
-  with tf.Graph().as_default() as graph:
-    result_type, result_binding = tensorflow_utils.capture_result_from_graph(
-        structure.Struct([]), graph)
-
-  type_signature = computation_types.FunctionType(None, result_type)
-  tensorflow = pb.TensorFlow(
-      graph_def=serialization_utils.pack_graph_def(graph.as_graph_def()),
-      parameter=None,
-      result=result_binding)
-  return _tensorflow_comp(tensorflow, type_signature)
+  return create_computation_for_py_fn(lambda: structure.Struct([]), None)
 
 
 def create_identity(type_signature: computation_types.Type) -> ProtoAndType:
@@ -294,23 +306,16 @@ def create_identity(type_signature: computation_types.Type) -> ProtoAndType:
   if parameter_type is None:
     raise TypeError('TensorFlow identity cannot be created for NoneType.')
 
-  with tf.Graph().as_default() as graph:
-    parameter_value, parameter_binding = tensorflow_utils.stamp_parameter_in_graph(
-        'x', parameter_type, graph)
-    # TF relies on feeds not-identical to fetches in certain circumstances.
-    if type_signature.is_tensor():
-      parameter_value = tf.identity(parameter_value)
-    elif type_signature.is_struct():
-      parameter_value = structure.map_structure(tf.identity, parameter_value)
-    result_type, result_binding = tensorflow_utils.capture_result_from_graph(
-        parameter_value, graph)
+  # TF relies on feeds not-identical to fetches in certain circumstances.
+  if type_signature.is_tensor() or type_signature.is_sequence():
+    identity_fn = tf.identity
+  elif type_signature.is_struct():
+    identity_fn = functools.partial(structure.map_structure, tf.identity)
+  else:
+    raise NotImplementedError(
+        f'TensorFlow identity cannot be created for type {type_signature}')
 
-  type_signature = computation_types.FunctionType(parameter_type, result_type)
-  tensorflow = pb.TensorFlow(
-      graph_def=serialization_utils.pack_graph_def(graph.as_graph_def()),
-      parameter=parameter_binding,
-      result=result_binding)
-  return _tensorflow_comp(tensorflow, type_signature)
+  return create_computation_for_py_fn(identity_fn, parameter_type)
 
 
 def create_replicate_input(type_signature: computation_types.Type,
@@ -331,20 +336,7 @@ def create_replicate_input(type_signature: computation_types.Type,
   type_analysis.check_tensorflow_compatible_type(type_signature)
   py_typecheck.check_type(count, int)
   parameter_type = type_signature
-
-  with tf.Graph().as_default() as graph:
-    parameter_value, parameter_binding = tensorflow_utils.stamp_parameter_in_graph(
-        'x', parameter_type, graph)
-    result = [parameter_value] * count
-    result_type, result_binding = tensorflow_utils.capture_result_from_graph(
-        result, graph)
-
-  type_signature = computation_types.FunctionType(parameter_type, result_type)
-  tensorflow = pb.TensorFlow(
-      graph_def=serialization_utils.pack_graph_def(graph.as_graph_def()),
-      parameter=parameter_binding,
-      result=result_binding)
-  return _tensorflow_comp(tensorflow, type_signature)
+  return create_computation_for_py_fn(lambda v: [v] * count, parameter_type)
 
 
 def create_computation_for_py_fn(
@@ -359,7 +351,6 @@ def create_computation_for_py_fn(
     fn: A Python function.
     parameter_type: A `computation_types.Type` or `None`.
   """
-  py_typecheck.check_type(fn, types.FunctionType)
   if parameter_type is not None:
     py_typecheck.check_type(parameter_type, computation_types.Type)
 

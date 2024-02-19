@@ -153,8 +153,8 @@ def state_with_new_model_weights(
         raise TypeError('Element is not the same tensor type. old '
                         f'({old_value.dtype}, {old_value.shape}) != '
                         f'new ({new_value.dtype}, {new_value.shape})')
-    elif (isinstance(new_value, collections.Sequence) and
-          isinstance(old_value, collections.Sequence)):
+    elif (isinstance(new_value, collections.abc.Sequence) and
+          isinstance(old_value, collections.abc.Sequence)):
       if len(old_value) != len(new_value):
         raise TypeError('Model weights have different lengths: '
                         f'(old) {len(old_value)} != (new) {len(new_value)})\n'
@@ -166,7 +166,7 @@ def state_with_new_model_weights(
                       'handled.\nOld weights structure: {old}\n'
                       'New weights structure: {new}\n'
                       'Must be one of (int, float, np.ndarray, tf.Tensor, '
-                      'collections.Sequence)'.format(
+                      'collections.abc.Sequence)'.format(
                           old=tf.nest.map_structure(type, old_value),
                           new=tf.nest.map_structure(type, new_value)))
 
@@ -562,7 +562,7 @@ def build_model_delta_optimizer_process(
     broadcast_process: Optional[measured_process.MeasuredProcess] = None,
     aggregation_process: Optional[measured_process.MeasuredProcess] = None,
     model_update_aggregation_factory: Optional[
-        factory.AggregationProcessFactory] = None,
+        factory.WeightedAggregationFactory] = None,
 ) -> iterative_process.IterativeProcess:
   """Constructs `tff.templates.IterativeProcess` for Federated Averaging or SGD.
 
@@ -587,7 +587,7 @@ def build_model_delta_optimizer_process(
       signature `({input_values}@CLIENTS-> output_values@SERVER)`. Must be
       `None` if `model_update_aggregation_factory` is not `None.`
     model_update_aggregation_factory: An optional
-      `tff.aggregators.AggregationProcessFactory` that contstructs
+      `tff.aggregators.WeightedAggregationFactory` that contstructs
       `tff.templates.AggregationProcess` for aggregating the client model
       updates on the server. If `None`, uses a default constructed
       `tff.aggregators.MeanFactory`, creating a stateless mean aggregation. Must
@@ -628,8 +628,8 @@ def build_model_delta_optimizer_process(
     model_update_aggregation_factory = mean_factory.MeanFactory()
 
   if model_update_aggregation_factory is not None:
-    aggregation_process = model_update_aggregation_factory.create(
-        model_weights_type.trainable)
+    aggregation_process = model_update_aggregation_factory.create_weighted(
+        model_weights_type.trainable, computation_types.TensorType(tf.float32))
 
   if aggregation_process is None:
     aggregation_process = build_stateless_mean(

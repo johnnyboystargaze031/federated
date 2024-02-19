@@ -19,7 +19,6 @@ import difflib
 import enum
 import typing
 from typing import Any, Dict, Optional, Type as TypingType, TypeVar
-import warnings
 import weakref
 
 import attr
@@ -47,18 +46,20 @@ MAX_LINE_LEN = 100
 
 
 @enum.unique
-class _TypeRelation(enum.Enum):
+class TypeRelation(enum.Enum):
   EQUIVALENT = 'equivalent'
   IDENTICAL = 'identical'
   ASSIGNABLE = 'assignable'
 
 
-def _type_mismatch_error_message(
+def type_mismatch_error_message(
     first: 'Type',
     second: 'Type',
-    relation: _TypeRelation,
+    relation: TypeRelation,
+    second_is_expected: bool = False,
 ) -> str:
   """Returns an error message describing the mismatch between two types."""
+  maybe_expected = 'expected ' if second_is_expected else ''
   first_str = first.compact_representation()
   second_str = second.compact_representation()
   diff = None
@@ -80,8 +81,8 @@ def _type_mismatch_error_message(
     split_second = second_str.split('\n')
     diff = '\n'.join(difflib.unified_diff(split_first, split_second))
   message = [
-      'Type', f'`{first_str}`', f'is not {relation.value} to type',
-      f'`{second_str}`'
+      'Type', f'`{first_str}`',
+      f'is not {relation.value} to {maybe_expected}type', f'`{second_str}`'
   ]
   if diff:
     message += [f'\nDiff:\n{diff}']
@@ -95,8 +96,8 @@ def _type_mismatch_error_message(
 class TypeNotAssignableError(TypeError):
 
   def __init__(self, source_type, target_type):
-    self.message = _type_mismatch_error_message(source_type, target_type,
-                                                _TypeRelation.ASSIGNABLE)
+    self.message = type_mismatch_error_message(source_type, target_type,
+                                               TypeRelation.ASSIGNABLE)
     super().__init__(self.message)
     self.source_type = source_type
     self.target_type = target_type
@@ -105,8 +106,8 @@ class TypeNotAssignableError(TypeError):
 class TypesNotEquivalentError(TypeError):
 
   def __init__(self, first_type, second_type):
-    self.message = _type_mismatch_error_message(first_type, second_type,
-                                                _TypeRelation.EQUIVALENT)
+    self.message = type_mismatch_error_message(first_type, second_type,
+                                               TypeRelation.EQUIVALENT)
     super().__init__(self.message)
     self.first_type = first_type
     self.second_type = second_type
@@ -115,8 +116,8 @@ class TypesNotEquivalentError(TypeError):
 class TypesNotIdenticalError(TypeError):
 
   def __init__(self, first_type, second_type):
-    self.message = _type_mismatch_error_message(first_type, second_type,
-                                                _TypeRelation.IDENTICAL)
+    self.message = type_mismatch_error_message(first_type, second_type,
+                                               TypeRelation.IDENTICAL)
     super().__init__(self.message)
     self.first_type = first_type
     self.second_type = second_type
@@ -489,7 +490,7 @@ class StructType(structure.Struct, Type, metaclass=_Intern):
 
   @staticmethod
   def _normalize_init_args(elements, convert=True):
-    py_typecheck.check_type(elements, collections.Iterable)
+    py_typecheck.check_type(elements, collections.abc.Iterable)
     if convert:
       if py_typecheck.is_named_tuple(elements):
         elements = typing.cast(Any, elements)
@@ -935,19 +936,27 @@ def to_type(spec) -> Type:
   ((tf.int32, [1]), (('x', (tf.float32, [2])), (tf.bool, [3])))
   ```
 
-  Custom `attr` classes can also be converted to a nested `tff.Type` by using
-  `attr.ib(type=...)` annotations (deprecated):
+  `attr.s` class instances can also be used to describe TFF types by populating
+  the fields with the corresponding types:
 
   ```python
-  @attr.s
+  @attr.s(auto_attribs=True)
   class MyDataClass:
-    int_scalar = attr.ib(type=tf.int32)
-    string_array = attr.ib(type=tff.TensorType(dtype=tf.string, shape=[3]))
-  ```
+    int_scalar: tf.Tensor
+    string_array: tf.Tensor
 
-  Support for converting `attr` classes is deprecated and will be removed in a
-  future release. Please use one of the other supported forms instead.
-  TODO(b/170486248): Deprecate support for converting `attr` classes.
+    @classmethod
+    def tff_type(cls) -> tff.Type:
+      return tff.to_type(cls(
+        int_scalar=tf.int32,
+        string_array=tff.TensorSpec(dtype=tf.string, shape=[3]),
+      ))
+
+  @tff.tf_computation(MyDataClass.tff_type())
+  def work(my_data):
+    assert isinstance(my_data, MyDataClass)
+    ...
+  ```
 
   Args:
     spec: Either an instance of `tff.Type`, or an argument convertible to
@@ -986,7 +995,7 @@ def to_type(spec) -> Type:
     return StructWithPythonType(spec, type(spec))
   elif py_typecheck.is_attrs(spec):
     return _to_type_from_attrs(spec)
-  elif isinstance(spec, collections.Mapping):
+  elif isinstance(spec, collections.abc.Mapping):
     # This is an unsupported mapping, likely a `dict`. StructType adds an
     # ordering, which the original container did not have.
     raise TypeError(
@@ -1003,24 +1012,15 @@ def to_type(spec) -> Type:
 def _to_type_from_attrs(spec) -> Type:
   """Converts an `attr.s` class or instance to a `tff.Type`."""
   if isinstance(spec, type):
-    # attrs class type, introspect the attributes for their type annotations.
-    elements = [(a.name, a.type) for a in attr.fields(spec)]
-    missing_types = [n for (n, t) in elements if not t]
-    if missing_types:
-      raise TypeError((
-          "Cannot infer tff.Type for attr.s class '{}' because some attributes "
-          'were missing type specifications: {}').format(
-              spec.__name__, missing_types))
-    the_type = spec
+    # attrs class type
+    raise TypeError(
+        'Converting `attr` classes to a federated type is no longer supported. '
+        'Either populate an instance of the `attr.s` class with the '
+        'appropriate field types, or use one of the other forms described in '
+        '`tff.to_type()` instead.')
   else:
     # attrs class instance, inspect the field values for instances convertible
     # to types.
-
-    # TODO(b/170486248): Deprecate support for converting `attr` classes.
-    warnings.warn(
-        'Deprecation warning: Converting `attr` classes to a federated type is '
-        'deprecated, use one of the other forms described in `tff.to_type()` '
-        'instead.', DeprecationWarning)
     elements = attr.asdict(
         spec, dict_factory=collections.OrderedDict, recurse=False)
     the_type = type(spec)

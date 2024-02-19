@@ -464,8 +464,8 @@ class FederatedResolvingStrategy(federating_executor.FederatingStrategy):
       raise RuntimeError('Cannot compute a federated mean over an empty group.')
     child = self._target_executors[placement_literals.SERVER][0]
     factor, multiply = await asyncio.gather(
-        executor_utils.embed_tf_scalar_constant(child, member_type,
-                                                float(1.0 / count)),
+        executor_utils.embed_tf_constant(child, member_type,
+                                         float(1.0 / count)),
         executor_utils.embed_tf_binary_operator(child, member_type,
                                                 tf.multiply))
     multiply_arg = await child.create_struct(
@@ -521,7 +521,12 @@ class FederatedResolvingStrategy(federating_executor.FederatingStrategy):
   async def compute_federated_secure_sum(
       self,
       arg: FederatedResolvingStrategyValue) -> FederatedResolvingStrategyValue:
-    raise NotImplementedError('The secure sum intrinsic is not implemented.')
+    raise NotImplementedError(
+        '`tff.federated_secure_sum()` is not implemented in this executor. '
+        'For a fake implementation of `federated_secure_sum` suitable for '
+        'testing, consider using the test executor context by adding the '
+        'following during initialization: '
+        '`tff.backends.test.set_test_execution_context()`')
 
   @tracing.trace
   async def compute_federated_sum(
@@ -529,8 +534,8 @@ class FederatedResolvingStrategy(federating_executor.FederatingStrategy):
       arg: FederatedResolvingStrategyValue) -> FederatedResolvingStrategyValue:
     py_typecheck.check_type(arg.type_signature, computation_types.FederatedType)
     zero, plus = await asyncio.gather(
-        executor_utils.embed_tf_scalar_constant(self._executor,
-                                                arg.type_signature.member, 0),
+        executor_utils.embed_tf_constant(self._executor,
+                                         arg.type_signature.member, 0),
         executor_utils.embed_tf_binary_operator(self._executor,
                                                 arg.type_signature.member,
                                                 tf.add))
